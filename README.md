@@ -99,4 +99,4 @@ will also need a potentiometer to control the contrast of the LCD display.
 
 The Fritzing diagram below visualises this wiring. 
 
-![Fritzing Diagram](fritz_CW2_2020_bb.png "Fritzing Diagram with LED and Button")
+![Fritzing Diagram](fritz_CW2_2025_bb.png "Fritzing Diagram with LED and Button")

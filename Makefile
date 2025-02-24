@@ -7,7 +7,7 @@ tester=testm
 
 CC=gcc
 AS=as
-OPTS=-W
+OPTS=-std=c99 -O2 -Wall -pedantic -g
 
 all: $(prg) cw2 $(tester)
 
