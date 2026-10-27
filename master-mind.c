@@ -61,13 +61,16 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <sys/ioctl.h>
+#include <ctype.h>
+
+
 
 /* --------------------------------------------------------------------------- */
 /* Config settings */
 /* you can use CPP flags to e.g. print extra debugging messages */
 /* or switch between different versions of the code e.g. digitalWrite() in Assembler */
 #define DEBUG
-#undef ASM_CODE
+#define ASM_CODE
 
 // =======================================================
 // Tunables
@@ -83,8 +86,8 @@
 // delay for loop iterations (mainly), in ms
 // in mili-seconds: 0.2s
 #define DELAY   200
-// in micro-seconds: 3s
-#define TIMEOUT 3000000
+// in micro-seconds: 5s
+#define TIMEOUT 5000000
 // =======================================================
 // APP constants   ---------------------------------
 // number of colours and length of the sequence
@@ -141,7 +144,7 @@ static unsigned char newChar [8] =
 /* Constants */
 
 static const int colors = COLS;
-static const int seqlen = SEQL;
+ int seqlen = SEQL;
 
 static char* color_names[] = { "red", "green", "blue" };
 
@@ -210,6 +213,9 @@ static int timed_out = 0;
 int failure (int fatal, const char *message, ...);
 void waitForEnter (void);
 void waitForButton (uint32_t *gpio, int button);
+void blinkN(uint32_t *gpio, int led, int c);
+void delay(unsigned int howLong);
+
 
 /* ======================================================= */
 /* SECTION: hardware interface (LED, button, LCD display)  */
@@ -242,6 +248,8 @@ int readButton(uint32_t *gpio, int button);
 /* can use readButton(), depending on your implementation */
 void waitForButton (uint32_t *gpio, int button);
 
+
+
 /* ======================================================= */
 /* SECTION: game logic                                     */
 /* ------------------------------------------------------- */
@@ -255,11 +263,29 @@ void waitForButton (uint32_t *gpio, int button);
 /* initialise the secret sequence; by default it should be a random sequence */
 void initSeq() {
   /* ***  COMPLETE the code here  ***  */
+      if (theSeq != NULL) {
+        free(theSeq);
+    }
+    theSeq = (int*)malloc(seqlen * sizeof(int));
+
+    if (theSeq == NULL) {
+        fprintf(stderr, "Error allocating memory for the sequence.\n");
+        exit(EXIT_FAILURE);
+    }
+
+    for (int i = 0; i < seqlen; i++) {
+        theSeq[i] = (rand() % 3) + 1; // Values between 0, 1, 2
+    }
+  
 }
 
 /* display the sequence on the terminal window, using the format from the sample run in the spec */
 void showSeq(int *seq) {
   /* ***  COMPLETE the code here  ***  */
+  for (int i = 0; i < seqlen; i++){
+    printf("%d" , seq[i]);
+  }
+  printf("\n");
 }
 
 #define NAN1 8
@@ -269,24 +295,91 @@ void showSeq(int *seq) {
 /* returns exact and approximate matches, either both encoded in one value, */
 /* or as a pointer to a pair of values */
 int /* or int* */ countMatches(int *seq1, int *seq2) {
+  #ifdef ASM_CODE
+  extern int matches(int *seq1, int *seq2, int *cpy1, int *cpy2);
+  return matches(seq1, seq2,cpy1,cpy2);
+  #else 
+  
   /* ***  COMPLETE the code here  ***  */
+  int exact = 0, approximate = 0;
+  int matchedSeq1[seqlen], matchedSeq2[seqlen];
+
+  for (int i = 0; i < seqlen; i++) {
+      matchedSeq1[i] = 0;
+      matchedSeq2[i] = 0;
+      if (seq1[i] == seq2[i]) {
+          exact++;
+          matchedSeq1[i] = 1;
+          matchedSeq2[i] = 1;
+      }
+  }
+
+  for (int i = 0; i < seqlen; i++) {
+      if (!matchedSeq1[i]) {
+          for (int j = 0; j < seqlen; j++) {
+              if (!matchedSeq2[j] && seq1[i] == seq2[j]) {
+                  approximate++;
+                  matchedSeq2[j] = 1;
+                  break;
+              }
+          }
+      }
+  }
+
+  return (exact << 4) | approximate;
+  #endif
 }
 
+
 /* show the results from calling countMatches on seq1 and seq1 */
-void showMatches(int /* or int* */ code, /* only for debugging */ int *seq1, int *seq2, /* optional, to control layout */ int lcd_format) {
-  /* ***  COMPLETE the code here  ***  */
+void showMatches(int code, int *seq1, int *seq2, int lcd_format) {
+ 
+    int exact = (code >> 4) & 0xF;
+    int approximate = code & 0xF;
+
+    printf("Exact: %d, Approximate: %d\n", exact, approximate);
+
+    // Blink LEDs for feedback
+    if (exact > 0) {
+        blinkN(gpio, LED, exact);      // Blink green LED for exact matches
+    }
+    delay(500);
+    blinkN(gpio, LED2, 1);
+
+    if (approximate > 0) {
+        blinkN(gpio, LED, approximate); // Blink GREEN LED for approximate matches
+    }
 }
+
+
+
+
+
 
 /* parse an integer value as a list of digits, and put them into @seq@ */
 /* needed for processing command-line with options -s or -u            */
 void readSeq(int *seq, int val) {
   /* ***  COMPLETE the code here  ***  */
+  for(int i = seqlen -1; i>= 0; i--){
+    seq[i] = val % 10;
+    val /= 10;
+  }
 }
 
 /* read a guess sequence fron stdin and store the values in arr */
 /* only needed for testing the game logic, without button input */
 int readNum(int max) {
   /* ***  COMPLETE the code here  ***  */
+  int num;
+  printf("Enter a number (up to %d): ", max);
+  scanf("%d", &num);
+
+  if (num < 0 || num > max) {
+      fprintf(stderr, "Invalid input. Enter a number between 0 and %d.\n", max);
+      return -1;
+  }
+
+  return num;
 }
 
 /* ======================================================= */
@@ -306,18 +399,58 @@ static uint64_t startT, stopT;
 /* use the libc fct gettimeofday() to implement it      */
 uint64_t timeInMicroseconds(){
   /* ***  COMPLETE the code here  ***  */
+    struct timeval currentTime;
+    if (gettimeofday(&currentTime, NULL) == -1) {
+        perror("gettimeofday failed");
+        return 0; // Return zero to indicate failure
+    }
+    return (uint64_t)(currentTime.tv_sec) * 1000000 + (uint64_t)(currentTime.tv_usec);
 }
+
+
 
 /* this should be the callback, triggered via an interval timer, */
 /* that is set-up through a call to sigaction() in the main fct. */
 void timer_handler (int signum) {
   /* ***  COMPLETE the code here  ***  */
+  stopT= timeInMicroseconds();
+  timed_out = 1;
+
+  struct itimerval stopTimer = {0};
+  setitimer(ITIMER_REAL, &stopTimer,NULL);
+
 }
 
 
 /* initialise time-stamps, setup an interval timer, and install the timer_handler callback */
 void initITimer(uint64_t timeout){
   /* ***  COMPLETE the code here  ***  */
+  struct sigaction sa;
+  struct itimerval timer;
+
+  // Setup the signal handler for SIGALRM
+  memset(&sa, 0, sizeof(sa));
+  sa.sa_handler = &timer_handler;
+  sigaction(SIGALRM, &sa, NULL);
+
+  // Timer starts immediately
+  timer.it_value.tv_sec = timeout / 1000000;
+  timer.it_value.tv_usec = timeout % 1000000;
+
+  // Repeat every 100ms (or adjust as needed)
+  timer.it_interval.tv_sec = 0;
+  timer.it_interval.tv_usec = 100000;  
+
+
+
+  // Start the timer
+  if (setitimer(ITIMER_REAL, &timer, NULL) == -1) {
+      perror("Error initializing interval timer");
+      exit(EXIT_FAILURE);
+  }
+
+  printf("[Timer] Timer initialized with %.3f seconds timeout.\n", (double)timeout / 1000000.0);
+  
 }
 
 /* ======================================================= */
@@ -633,10 +766,81 @@ void lcdPuts (struct lcdDataStruct *lcd, const char *string)
 /* --------------------------------------------------------------------------- */
 /* interface on top of the low-level pin I/O code */
 
-/* blink the led on pin @led@, @c@ times */
+/* blink the led on pin @led
+      char current = surname[k];@, @c@ times */
 void blinkN(uint32_t *gpio, int led, int c) { 
   /* ***  COMPLETE the code here  ***  */
+  for(int i = 0; i < c; i++){
+    writeLED(gpio,led,HIGH);
+    delay(500);
+    writeLED(gpio,led,LOW);
+    delay(500);
+
+    
+  }
 }
+int vowel(char x){
+  x = tolower(x);
+  return( x=='a' || x=='e' || x=='i' || x=='o' || x=='u');
+}
+void surnameBlink(uint32_t *gpio, char *surname) {
+  
+
+  int len = strlen(surname);  // Use string length for iteration
+  for (int k = 0; k < len; k++) {
+      char current = surname[k];
+      if (vowel(current)) {
+        fprintf(stderr, "[DEBUG] Vowel: %c — Blinking GREEN LED\n", current);
+          writeLED(gpio, LED, HIGH);
+          delay(500);  // Reduced delay for smoother feedback
+          writeLED(gpio, LED, LOW);
+      } else {
+        
+        fprintf(stderr, "[DEBUG] Consonent: %c — Blinking RED LED\n", current);
+          writeLED(gpio, LED2, HIGH);
+          delay(500);  // Reduced delay for smoother feedback
+          writeLED(gpio, LED2, LOW);
+      }
+      delay(500);  // Shorter gap between flashes
+      
+  }
+}
+
+int readNumberFromButton(uint32_t *gpio, int buttonPin, int timeout_ms, int pinColour) {
+  int count = 0;
+  int elapsed = 0;
+  
+
+  // Wait for first press (start of input)
+  while (readButton(gpio, buttonPin) == LOW) {
+      delay(100);
+      elapsed += 100;
+      if (elapsed >= timeout_ms) {
+          return -1;  // Timeout: no input
+      }
+  }
+
+  delay(300); // debounce
+
+  // Count presses while button is held
+  while (readButton(gpio, buttonPin) == HIGH) {
+      count++;
+      writeLED(gpio, LED, HIGH);
+      delay(150);
+      writeLED(gpio, LED, LOW);
+      delay(150);
+  }
+    writeLED(gpio, LED2, HIGH);
+    delay(200);
+    writeLED(gpio, LED2, LOW);
+
+    // Ensure the number is 1, 2, or 3 only
+    if (count < 1) count = 1;
+    if (count > 3) count = 3;
+
+  return count;
+}
+
 
 /* ======================================================= */
 /* SECTION: main fct                                       */
@@ -788,6 +992,12 @@ int main (int argc, char *argv[])
 
   // GPIO:
   gpio = (uint32_t *)mmap(0, BLOCK_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, gpiobase) ;
+
+  if (gpio == MAP_FAILED) {
+    perror("mmap (GPIO) failed");
+    exit(EXIT_FAILURE);
+}
+fprintf(stderr, "[DEBUG] GPIO successfully mapped at: %p\n", (void*)gpio);
   if ((int32_t)gpio == -1)
     return failure (FALSE, "setup: mmap (GPIO) failed: %s\n", strerror (errno)) ;
 
@@ -795,6 +1005,12 @@ int main (int argc, char *argv[])
   // Configuration of LED and BUTTON
 
   /* ***  COMPLETE the code here  ***  */
+  pinMode(gpio,LED,OUTPUT);
+  pinMode(gpio,LED2,OUTPUT);
+  pinMode(gpio,BUTTON,INPUT);
+
+  digitalWrite(gpio,LED, LOW);
+  digitalWrite(gpio,LED2, LOW);
   
   // -------------------------------------------------------
   // INLINED version of lcdInit (can only deal with one LCD attached to the RPi):
@@ -888,38 +1104,145 @@ int main (int argc, char *argv[])
   // END lcdInit ------
   // -----------------------------------------------------------------------------
   // Start of game
+
+
   fprintf(stderr,"Printing welcome message on the LCD display ...\n");
   /* ***  COMPLETE the code here  ***  */
+  lcdClear(lcd);
+  lcdPosition(lcd, 0, 0);
+  lcdPuts(lcd, "Welcome ");
+  delay(2000);
+  lcdClear(lcd);
+
+
+
+
+
+  char *surname = "Mawjee";
+  surnameBlink(gpio, surname);
+  
+  startT = timeInMicroseconds();   // Initialize start time for timeout tracking
+  initITimer(TIMEOUT);             // Start timeout timer
 
   /* initialise the secret sequence */
   if (!opt_s)
+    srand(time(NULL));
     initSeq();
   if (debug)
     showSeq(theSeq);
 
   // optionally one of these 2 calls:
   // waitForEnter () ; 
-  // waitForButton (gpio, pinButton) ;
+  // waitForButton (gpio, pinButton) ;+
 
   // -----------------------------------------------------------------------------
   // +++++ main loop
-  while (!found) {
-    attempts++;
+  int pinColour = 3;
+  int timeoutOccurred = 0;
+  while (!found && attempts < 10 ) {
+int timeoutOccurred = 0;
+    for (int i = 0; i < seqlen; i++) {
+        writeLED(gpio, LED2, HIGH);
+        delay(300);
+        writeLED(gpio, LED2, LOW);
+        delay(300);
+    }
+attempts++;
+    printf("\nAttempt #%d: Enter your guess by pressing the button: \n", attempts);
 
-    /* ******************************************************* */
-    /* ***  COMPLETE the code here  ***                        */
-    /* this needs to implement the main loop of the game:      */
-    /* check for button presses and count them                 */
-    /* store the input numbers in the sequence @attSeq@        */
-    /* compute the match with the secret sequence, and         */
-    /* show the result                                         */
-    /* see CW spec for details                                 */
-    /* ******************************************************* */
-  }
-  if (found) {
-      /* ***  COMPLETE the code here  ***  */
-  } else {
-    fprintf(stdout, "Sequence not found\n");
-  }
+    char guessDisplay[seqlen + 1];  // For showing input on LCD
+memset(guessDisplay, '_', seqlen);
+guessDisplay[seqlen] = '\0';
+
+for (int i = 0; i < seqlen; i++) {
+    lcdClear(lcd);
+    lcdPosition(lcd, 0, 0);
+    char prompt[32];
+    snprintf(prompt, sizeof(prompt),"Enter Guess %d:", i + 1);
+    lcdPuts(lcd, prompt);
+
+    attSeq[i] = readNumberFromButton(gpio, BUTTON, 3000, pinColour);
+
+    if (attSeq[i] == -1) {
+        printf("Attempt being skipped as a result of timeout\n");
+        timeoutOccurred = 1;
+        break;
+    }
+    
+
+    guessDisplay[i] = '0' + attSeq[i];
+
+    lcdPosition(lcd, 0, 1);  // Second row of LCD
+    lcdPuts(lcd, guessDisplay);
+
+    printf("Guess %d Entered: %d\n", i + 1, attSeq[i]);
+
+    writeLED(gpio, LED, HIGH);
+    delay(200);
+    writeLED(gpio, LED, LOW);
+    delay(200);
+}
+
+    // If any timeout occurred, skip match checking and red/green LED feedback
+if (timeoutOccurred) {
+  printf("Some inputs were missed due to timeout. Skipping match check.\n");
+  attempts++;
+  continue;  // move to next attempt
+}
+
+
+    int encoded = countMatches(theSeq, attSeq);
+    int exact = encoded / 10; 
+    int approximate = encoded % 10;
+
+    printf("Exact = %d, Approximate = %d\n", exact, approximate);
+
+    lcdClear(lcd);
+    char l[32];
+    snprintf(l, sizeof(l), "Exact:%d Approximate:%d", exact, approximate);
+    lcdPuts(lcd, l);
+
+    if (exact == seqlen) {
+        printf("Congratulations! You have guessed the sequence in %d attempts.\n", attempts);
+        lcdClear(lcd);
+        usleep(50000);
+
+        lcdPosition(lcd, 0, 0);
+        lcdPuts(lcd, "SUCCESS!");
+
+        char msg[16];
+        snprintf(msg, sizeof(msg), "Attempts :%d", attempts);
+        lcdPosition(lcd, 0, 1);
+        lcdPuts(lcd, msg);
+
+        // Green LED blinks 3 times
+        for (int i = 0; i < 3; i++) {
+            writeLED(gpio, LED, HIGH);
+            delay(300);
+            writeLED(gpio, LED, LOW);
+            delay(300);
+        }
+
+        writeLED(gpio, LED2, LOW);
+        found = 1;
+    } else {
+        // Blink red LED twice to indicate another attempt is needed
+        for (int i = 0; i < 2; i++) {
+            writeLED(gpio, LED2, HIGH);
+            delay(300);
+            writeLED(gpio, LED2, LOW);
+            delay(300);
+        }
+        delay(300);
+    }
+
+    
+}
+
+if (!found) {
+  printf("Sequence not found in 10 attempts. Game Over.\n");
+  lcdClear(lcd);
+  lcdPuts(lcd, "Game Over.");
+}
   return 0;
 }

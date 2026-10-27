@@ -1,3 +1,18 @@
+# MasterMind on a Raspberry Pi (C + ARM Assembly)
+
+Pair project by Shakir Mawjee and Sukhrajveer Singh Loyal for F28HS Hardware-Software Interface at Heriot-Watt University (2024/25).
+
+## What we built
+- Game loop in C (`master-mind.c`): the Pi picks a secret sequence and the player gets up to 10 guesses.
+- Guesses are entered by pressing a button, with a timer (`setitimer`) that ends a guess when the player stops pressing.
+- Results are shown on a 16x2 LCD in 4-bit mode and by blinking a green and a red LED.
+- GPIO control (`digitalWrite`, `pinMode`, `readButton` in `lcdBinary.c`) written in inline ARM Assembly with memory-mapped I/O and no libraries.
+- The exact/approximate match checker is an ARM Assembly function, `matches`, in `mm-matches.s`.
+
+The original coursework template description follows.
+
+---
+
 # f28hs-2024-25-cwk2-sys
 
 Coursework 2 in F28HS "Hardware-Software Interface" on Systems Programming in C and ARM Assembler
